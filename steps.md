@@ -56,3 +56,6 @@ require('dotenv').config();
    - Redirected back with authorization code
    - Server exchanges code for tokens
    - Tokens stored in environment vari
+
+   // authorize url --> account.google.com/o/oauth2/v2/auth
+// token url --> https://oauth2.googleapis.com/token
