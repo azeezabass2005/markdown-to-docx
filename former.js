@@ -5,7 +5,6 @@ const dotenv = require('dotenv');
 const axios = require('axios');
 const marked = require('marked');
 const AdmZip = require('adm-zip');
-const { DOMParser } = require('xmldom');
 
 dotenv.config();
 
@@ -58,10 +57,7 @@ app.get('/auth/google', (req, res) => {
     'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/drive.file',
     'https://www.googleapis.com/auth/documents',
-    'https://www.googleapis.com/auth/drive.metadata.readonly',
-    'https://www.googleapis.com/auth/drive.appdata',
-    'https://www.googleapis.com/auth/drive.appfolder',
-    'https://www.googleapis.com/auth/drive.resource'
+    'https://www.googleapis.com/auth/drive.metadata.readonly'
   ];
 
   const url = oauth2Client.generateAuthUrl({
@@ -210,198 +206,8 @@ app.get('/api/docs', authenticateGoogle, async (req, res) => {
   }
 });
 
-// Conversion Utilities
-function htmlToGoogleDocsStructure(htmlContent) {
-  // Parse HTML to extract text and structure
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(htmlContent, 'text/html');
-
-  const requests = [];
-  let currentIndex = 1;
-
-  // Helper function to add text with formatting
-  const addFormattedText = (text, formatting = {}) => {
-    requests.push({
-      insertText: {
-        location: { index: currentIndex },
-        text: text
-      }
-    });
-
-    if (Object.keys(formatting).length > 0) {
-      requests.push({
-        updateTextStyle: {
-          range: {
-            startIndex: currentIndex,
-            endIndex: currentIndex + text.length
-          },
-          textStyle: formatting,
-          fields: 'bold,italic,underline'
-        }
-      });
-    }
-
-    currentIndex += text.length;
-  };
-
-  // Process headings
-  const headings = doc.getElementsByTagName('h1');
-  Array.from(headings).forEach(heading => {
-    addFormattedText(heading.textContent + '\n', { bold: true });
-  });
-
-  // Process paragraphs
-  const paragraphs = doc.getElementsByTagName('p');
-  Array.from(paragraphs).forEach(para => {
-    addFormattedText(para.textContent + '\n');
-  });
-
-  // Process lists
-  const lists = doc.getElementsByTagName('ul');
-  Array.from(lists).forEach(list => {
-    const listItems = list.getElementsByTagName('li');
-    Array.from(listItems).forEach(item => {
-      addFormattedText('• ' + item.textContent + '\n');
-    });
-  });
-
-  return requests;
-}
-
 // Conversion Route
 app.post('/api/convert', authenticateGoogle, async (req, res) => {
-  try {
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const docs = google.docs({ version: 'v1', auth: oauth2Client });
-
-    // Create a converted folder
-    const folderMetadata = {
-      name: 'Converted Markdown Files',
-      mimeType: 'application/vnd.google-apps.folder'
-    };
-    const folder = await drive.files.create({
-      resource: folderMetadata,
-      fields: 'id'
-    });
-    const convertedFolderId = folder.data.id;
-
-    // Search for Google Docs files
-    const fileListResponse = await drive.files.list({
-      q: "mimeType='application/vnd.google-apps.document'",
-      pageSize: 100,
-      fields: 'files(id, name)',
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true
-    });
-
-    const markdownFiles = [];
-    const convertedFiles = [];
-    const zip = new AdmZip();
-
-    for (const file of fileListResponse.data.files) {
-      try {
-        // Get the document content
-        const docContent = await docs.documents.get({
-          documentId: file.id
-        });
-
-        // Extract content (your existing extraction method)
-        const rawContent = docContent.data.body.content
-            .filter(section => section.paragraph && section.paragraph.elements)
-            .map(section =>
-                section.paragraph.elements
-                    .filter(element => element.textRun && element.textRun.content)
-                    .map(element => element.textRun.content)
-                    .join('')
-            )
-            .join('\n');
-
-        // Convert markdown to HTML
-        const htmlContent = marked.parse(rawContent);
-
-        // Convert HTML to Google Docs structure
-        const requests = htmlToGoogleDocsStructure(htmlContent);
-
-        // Create a new Google Docs file
-        const docsFile = await docs.documents.create({
-          resource: {
-            title: `Converted-${file.name}`
-          }
-        });
-
-        // Batch update the document with formatted content
-        await docs.documents.batchUpdate({
-          documentId: docsFile.data.documentId,
-          resource: { requests }
-        });
-
-        // Move the file to converted folder
-        await drive.files.update({
-          fileId: docsFile.data.documentId,
-          addParents: convertedFolderId,
-          fields: 'id, parents',
-          supportsAllDrives: true
-        });
-
-        // Export as PDF and add to zip
-        // const pdfContent = await drive.files.export({
-        //   fileId: docsFile.data.documentId,
-        //   mimeType: 'application/pdf'
-        // });
-        const pdfResponse = await drive.files.export(
-            {
-              fileId: docsFile.data.documentId,
-              mimeType: 'application/pdf'
-            },
-            { responseType: 'arraybuffer' } // Ensure the response is an ArrayBuffer
-        );
-
-// Convert ArrayBuffer to Buffer
-        const pdfBuffer = Buffer.from(pdfResponse.data);
-
-        // Ensure we're working with a buffer for the PDF
-        // const pdfBuffer = Buffer.from(pdfContent.data);
-
-        zip.addFile(`${file.name}.pdf`, pdfBuffer);
-
-        convertedFiles.push({
-          originalFileName: file.name,
-          convertedFileName: `${file.name}.pdf`,
-          status: 'converted'
-        });
-      } catch (fileError) {
-        console.error(`Error processing file ${file.id}:`, fileError);
-        convertedFiles.push({
-          originalFileName: file.name,
-          status: 'failed',
-          error: fileError.message
-        });
-      }
-    }
-
-    // Generate zip file
-    const zipBuffer = zip.toBuffer();
-
-    res.json({
-      totalFiles: markdownFiles.length,
-      convertedFiles,
-      zipDownloadLink: `/api/download-zip?token=${req.headers.authorization.split(' ')[1]}`
-    });
-
-    // Store zip temporarily
-    global.convertedZip = zipBuffer;
-  } catch (error) {
-    console.error('Conversion error:', error);
-    res.status(500).json({
-      error: 'Conversion Failed',
-      details: error.message
-    });
-  }
-});
-
-
-// Conversion Route
-app.post('/api/convert-2', authenticateGoogle, async (req, res) => {
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     const docs = google.docs({ version: 'v1', auth: oauth2Client });

@@ -3,11 +3,16 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "axios": "^1.7.9",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",
     "mammoth": "^1.8.0",
-    "marked": "^15.0.4"
+    "marked": "^15.0.4",
+    "showdown": "^2.1.0",
+    "xmldom": "^0.6.0"
   }
 }
