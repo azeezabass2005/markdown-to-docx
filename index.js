@@ -74,6 +74,8 @@ app.get('/auth/google', (req, res) => {
 app.post('/auth/google/callback', async (req, res) => {
   const { code } = req.body;
 
+  console.log(code, "This is the code gotten on the backend")
+
   if (!code) {
     return res.status(400).json({
       message: 'No authorization code provided'
@@ -83,6 +85,8 @@ app.post('/auth/google/callback', async (req, res) => {
   try {
     // Exchange authorization code for tokens
     const { tokens } = await oauth2Client.getToken(code);
+
+    console.log(tokens, "This is the tokens from google auth")
 
     // Validate tokens
     if (!tokens.access_token) {
