@@ -77,6 +77,9 @@ app.get('/auth/google', (req, res) => {
 app.post('/auth/google/callback', async (req, res) => {
   const { code } = req.body;
 
+
+  console.log(code, "This is the code")
+
   if (!code) {
     return res.status(400).json({
       message: 'No authorization code provided'
