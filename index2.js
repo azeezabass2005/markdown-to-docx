@@ -12,10 +12,7 @@ dotenv.config();
 const app = express();
 
 // Middleware
-app.use(cors({
-  origin: 'http://localhost:5173', // Your frontend URL
-  credentials: true
-}));
+app.use(cors('*'));
 app.use(express.json());
 
 // OAuth Client Configuration
@@ -77,8 +74,7 @@ app.get('/auth/google', (req, res) => {
 app.post('/auth/google/callback', async (req, res) => {
   const { code } = req.body;
 
-
-  console.log(code, "This is the code")
+  console.log(code, "This is the code gotten on the backend")
 
   if (!code) {
     return res.status(400).json({
@@ -89,6 +85,8 @@ app.post('/auth/google/callback', async (req, res) => {
   try {
     // Exchange authorization code for tokens
     const { tokens } = await oauth2Client.getToken(code);
+
+    console.log(tokens, "This is the tokens from google auth")
 
     // Validate tokens
     if (!tokens.access_token) {
@@ -215,18 +213,20 @@ app.get('/api/docs', authenticateGoogle, async (req, res) => {
 
 // Conversion Utilities
 function htmlToGoogleDocsStructure(htmlContent) {
+  // Parse HTML to extract text and structure
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlContent, 'text/html');
 
   const requests = [];
   let currentIndex = 1;
 
+  // Helper function to add text with formatting
   const addFormattedText = (text, formatting = {}) => {
     requests.push({
       insertText: {
         location: { index: currentIndex },
-        text: text,
-      },
+        text: text
+      }
     });
 
     if (Object.keys(formatting).length > 0) {
@@ -234,50 +234,36 @@ function htmlToGoogleDocsStructure(htmlContent) {
         updateTextStyle: {
           range: {
             startIndex: currentIndex,
-            endIndex: currentIndex + text.length,
+            endIndex: currentIndex + text.length
           },
           textStyle: formatting,
-          fields: Object.keys(formatting).join(','),
-        },
+          fields: 'bold,italic,underline'
+        }
       });
     }
 
     currentIndex += text.length;
   };
 
-  const elements = doc.body.children;
+  // Process headings
+  const headings = doc.getElementsByTagName('h1');
+  Array.from(headings).forEach(heading => {
+    addFormattedText(heading.textContent + '\n', { bold: true });
+  });
 
-  Array.from(elements).forEach((element) => {
-    switch (element.tagName.toLowerCase()) {
-      case 'h1':
-        addFormattedText(element.textContent + '\n', {
-          bold: true,
-          fontSize: { magnitude: 24, unit: 'PT' },
-        });
-        break;
-      case 'h2':
-        addFormattedText(element.textContent + '\n', {
-          bold: true,
-          fontSize: { magnitude: 20, unit: 'PT' },
-        });
-        break;
-      case 'p':
-        addFormattedText(element.textContent + '\n');
-        break;
-      case 'ul':
-        Array.from(element.children).forEach((li) => {
-          addFormattedText('• ' + li.textContent + '\n');
-        });
-        break;
-      case 'code':
-        addFormattedText(element.textContent + '\n', {
-          backgroundColor: { color: { rgbColor: { red: 0.95, green: 0.95, blue: 0.95 } } },
-          fontFamily: 'Courier New',
-        });
-        break;
-      default:
-        addFormattedText(element.textContent + '\n');
-    }
+  // Process paragraphs
+  const paragraphs = doc.getElementsByTagName('p');
+  Array.from(paragraphs).forEach(para => {
+    addFormattedText(para.textContent + '\n');
+  });
+
+  // Process lists
+  const lists = doc.getElementsByTagName('ul');
+  Array.from(lists).forEach(list => {
+    const listItems = list.getElementsByTagName('li');
+    Array.from(listItems).forEach(item => {
+      addFormattedText('• ' + item.textContent + '\n');
+    });
   });
 
   return requests;
@@ -331,68 +317,59 @@ app.post('/api/convert', authenticateGoogle, async (req, res) => {
             )
             .join('\n');
 
-        if (
-            rawContent.includes('# ') ||
-            rawContent.includes('## ') ||
-            rawContent.includes('**') ||
-            rawContent.includes('*') ||
-            rawContent.includes('- ') ||
-            rawContent.includes('```')
-        ) {
-          // Convert markdown to HTML
-          const htmlContent = marked.parse(rawContent);
+        // Convert markdown to HTML
+        const htmlContent = marked.parse(rawContent);
 
-          // Convert HTML to Google Docs structure
-          const requests = htmlToGoogleDocsStructure(htmlContent);
+        // Convert HTML to Google Docs structure
+        const requests = htmlToGoogleDocsStructure(htmlContent);
 
-          // Create a new Google Docs file
-          const docsFile = await docs.documents.create({
-            resource: {
-              title: `Converted-${file.name}`
-            }
-          });
+        // Create a new Google Docs file
+        const docsFile = await docs.documents.create({
+          resource: {
+            title: `Converted-${file.name}`
+          }
+        });
 
-          // Batch update the document with formatted content
-          await docs.documents.batchUpdate({
-            documentId: docsFile.data.documentId,
-            resource: { requests }
-          });
+        // Batch update the document with formatted content
+        await docs.documents.batchUpdate({
+          documentId: docsFile.data.documentId,
+          resource: { requests }
+        });
 
-          // Move the file to converted folder
-          await drive.files.update({
-            fileId: docsFile.data.documentId,
-            addParents: convertedFolderId,
-            fields: 'id, parents',
-            supportsAllDrives: true
-          });
+        // Move the file to converted folder
+        await drive.files.update({
+          fileId: docsFile.data.documentId,
+          addParents: convertedFolderId,
+          fields: 'id, parents',
+          supportsAllDrives: true
+        });
 
-          // Export as PDF and add to zip
-          // const pdfContent = await drive.files.export({
-          //   fileId: docsFile.data.documentId,
-          //   mimeType: 'application/pdf'
-          // });
-          const pdfResponse = await drive.files.export(
-              {
-                fileId: docsFile.data.documentId,
-                mimeType: 'application/pdf'
-              },
-              { responseType: 'arraybuffer' } // Ensure the response is an ArrayBuffer
-          );
+        // Export as PDF and add to zip
+        // const pdfContent = await drive.files.export({
+        //   fileId: docsFile.data.documentId,
+        //   mimeType: 'application/pdf'
+        // });
+        const pdfResponse = await drive.files.export(
+            {
+              fileId: docsFile.data.documentId,
+              mimeType: 'application/pdf'
+            },
+            { responseType: 'arraybuffer' } // Ensure the response is an ArrayBuffer
+        );
 
 // Convert ArrayBuffer to Buffer
-          const pdfBuffer = Buffer.from(pdfResponse.data);
+        const pdfBuffer = Buffer.from(pdfResponse.data);
 
-          // Ensure we're working with a buffer for the PDF
-          // const pdfBuffer = Buffer.from(pdfContent.data);
+        // Ensure we're working with a buffer for the PDF
+        // const pdfBuffer = Buffer.from(pdfContent.data);
 
-          zip.addFile(`${file.name}.pdf`, pdfBuffer);
+        zip.addFile(`${file.name}.pdf`, pdfBuffer);
 
-          convertedFiles.push({
-            originalFileName: file.name,
-            convertedFileName: `${file.name}.pdf`,
-            status: 'converted'
-          });
-        }
+        convertedFiles.push({
+          originalFileName: file.name,
+          convertedFileName: `${file.name}.pdf`,
+          status: 'converted'
+        });
       } catch (fileError) {
         console.error(`Error processing file ${file.id}:`, fileError);
         convertedFiles.push({
