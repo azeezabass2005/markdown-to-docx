@@ -22,30 +22,84 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_REDIRECT_URL
 );
 
+// Enhanced markdown detection function with more lenient checks
 function isMarkdownContent(content) {
+  // Log content for debugging
+  console.log('Checking content:', content.substring(0, 200) + '...'); // First 200 chars
+
   const markdownPatterns = {
-    headers: /^#{1,6}\s.+$/m,                    // Headers
-    lists: /^[-*+]\s.+$/m,                       // Unordered lists
-    numberedLists: /^\d+\.\s.+$/m,              // Numbered lists
-    codeBlocks: /```[\s\S]*?```/,               // Code blocks
-    inlineCode: /`[^`]+`/,                       // Inline code
-    emphasis: /(\*\*[^*]+\*\*)|(__[^_]+__)/,    // Bold
-    italic: /(\*[^*]+\*)|(_[^_]+_)/,            // Italic
-    links: /\[([^\]]+)\]\(([^)]+)\)/,           // Links
-    blockquotes: /^>\s.+$/m,                     // Blockquotes
-    tables: /\|[^|]+\|/,                         // Tables
-    horizontalRules: /^[-*_]{3,}$/m             // Horizontal rules
+    headers: /#\s.+/m,                          // Headers (more lenient)
+    lists: /^[-*+]\s.+/m,                       // Unordered lists
+    numberedLists: /^\d+\.\s.+/m,              // Numbered lists
+    codeBlocks: /```[\s\S]*?```/,              // Code blocks
+    inlineCode: /`[^`]+`/,                      // Inline code
+    emphasis: /(\*\*|\*|__|_)/,                 // Bold/Italic (more lenient)
+    links: /\[.+?\]\(.+?\)/,                    // Links (more lenient)
+    blockquotes: /^>\s.+/m,                     // Blockquotes
+    tables: /\|.+\|/,                           // Tables (more lenient)
+    horizontalRules: /^[-*_]{3,}$/m            // Horizontal rules
   };
 
-  // Count how many markdown patterns are matched
-  const matchedPatterns = Object.values(markdownPatterns)
-      .filter(pattern => pattern.test(content))
-      .length;
+  // Log which patterns are found
+  const matchedPatterns = Object.entries(markdownPatterns)
+      .filter(([name, pattern]) => {
+        const isMatch = pattern.test(content);
+        console.log(`Pattern ${name}: ${isMatch ? 'found' : 'not found'}`);
+        return isMatch;
+      });
 
-  // Require at least 3 different markdown patterns to consider it a markdown file
-  return matchedPatterns >= 3;
+  // More lenient requirement: only need 2 patterns or specific important patterns
+  const hasImportantPatterns = markdownPatterns.headers.test(content) ||
+      markdownPatterns.lists.test(content) ||
+      markdownPatterns.emphasis.test(content);
+
+  return matchedPatterns.length >= 2 || hasImportantPatterns;
 }
 
+// Improved content extraction function
+function extractDocumentContent(docContent) {
+  try {
+    if (!docContent.body || !docContent.body.content) {
+      console.log('Document body or content is missing');
+      return '';
+    }
+
+    const contentParts = [];
+
+    const processElement = (element) => {
+      if (element.paragraph && element.paragraph.elements) {
+        element.paragraph.elements.forEach(el => {
+          if (el.textRun && el.textRun.content) {
+            contentParts.push(el.textRun.content);
+          }
+        });
+      } else if (element.table) {
+        element.table.tableRows.forEach(row => {
+          row.tableCells.forEach(cell => {
+            if (cell.content) {
+              cell.content.forEach(cellElement => {
+                processElement(cellElement);
+              });
+            }
+          });
+        });
+      } else if (element.tableOfContents) {
+        // Skip TOC elements
+      } else {
+        console.log('Unknown element type:', Object.keys(element));
+      }
+    };
+
+    docContent.body.content.forEach(processElement);
+
+    const fullContent = contentParts.join('\n');
+    console.log('Extracted content length:', fullContent.length);
+    return fullContent;
+  } catch (error) {
+    console.error('Content extraction error:', error);
+    return '';
+  }
+}
 function htmlToGoogleDocsStructure(htmlContent) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlContent, 'text/html');
@@ -303,10 +357,10 @@ function extractDocumentContent(docContent) {
 // Docs Route - Find Markdown-like Documents
 app.get('/api/docs', authenticateGoogle, async (req, res) => {
   try {
+    console.log('Starting /api/docs endpoint');
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     const docs = google.docs({ version: 'v1', auth: oauth2Client });
 
-    // Search for Google Docs files with broader permissions
     const response = await drive.files.list({
       q: "mimeType='application/vnd.google-apps.document'",
       fields: 'files(id, name, permissions)',
@@ -314,40 +368,43 @@ app.get('/api/docs', authenticateGoogle, async (req, res) => {
       includeItemsFromAllDrives: true
     });
 
-    // Filter and verify docs with markdown-like content
+    console.log(`Found ${response.data.files.length} total documents`);
     const markdownDocs = [];
 
     for (const file of response.data.files) {
       try {
-        // Get the document content
+        console.log(`Processing file: ${file.name} (${file.id})`);
         const docContent = await docs.documents.get({
           documentId: file.id
         });
 
-        // Extract content
         const content = extractDocumentContent(docContent.data);
+        console.log(`Extracted content length for ${file.name}: ${content.length}`);
 
-        // Basic markdown detection (you can refine this logic)
-        if (
-            isMarkdownContent(content)
-        ) {
-          markdownDocs.push(file);
+        if (isMarkdownContent(content)) {
+          console.log(`${file.name} identified as markdown`);
+          markdownDocs.push({
+            ...file,
+            previewContent: content.substring(0, 200) // Add preview content for verification
+          });
+        } else {
+          console.log(`${file.name} is not markdown`);
         }
       } catch (error) {
         console.error(`Error processing doc ${file.id}:`, error);
       }
     }
 
+    console.log(`Found ${markdownDocs.length} markdown documents`);
     res.json(markdownDocs);
   } catch (error) {
     console.error('Full error details:', error);
     res.status(500).json({
-      error: 'Insufficient Permission',
+      error: 'Error processing documents',
       details: error.message
     });
   }
 });
-
 // Conversion Utilities
 
 // Update your conversion endpoint to use the new functions
