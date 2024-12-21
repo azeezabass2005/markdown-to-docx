@@ -22,203 +22,6 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_REDIRECT_URL
 );
 
-// Enhanced markdown detection function with more lenient checks
-function isMarkdownContent(content) {
-  // Log content for debugging
-  console.log('Checking content:', content.substring(0, 200) + '...'); // First 200 chars
-
-  const markdownPatterns = {
-    headers: /#\s.+/m,                          // Headers (more lenient)
-    lists: /^[-*+]\s.+/m,                       // Unordered lists
-    numberedLists: /^\d+\.\s.+/m,              // Numbered lists
-    codeBlocks: /```[\s\S]*?```/,              // Code blocks
-    inlineCode: /`[^`]+`/,                      // Inline code
-    emphasis: /(\*\*|\*|__|_)/,                 // Bold/Italic (more lenient)
-    links: /\[.+?\]\(.+?\)/,                    // Links (more lenient)
-    blockquotes: /^>\s.+/m,                     // Blockquotes
-    tables: /\|.+\|/,                           // Tables (more lenient)
-    horizontalRules: /^[-*_]{3,}$/m            // Horizontal rules
-  };
-
-  // Log which patterns are found
-  const matchedPatterns = Object.entries(markdownPatterns)
-      .filter(([name, pattern]) => {
-        const isMatch = pattern.test(content);
-        console.log(`Pattern ${name}: ${isMatch ? 'found' : 'not found'}`);
-        return isMatch;
-      });
-
-  // More lenient requirement: only need 2 patterns or specific important patterns
-  const hasImportantPatterns = markdownPatterns.headers.test(content) ||
-      markdownPatterns.lists.test(content) ||
-      markdownPatterns.emphasis.test(content);
-
-  return matchedPatterns.length >= 2 || hasImportantPatterns;
-}
-
-// Improved content extraction function
-function extractDocumentContent(docContent) {
-  try {
-    if (!docContent.body || !docContent.body.content) {
-      console.log('Document body or content is missing');
-      return '';
-    }
-
-    const contentParts = [];
-
-    const processElement = (element) => {
-      if (element.paragraph && element.paragraph.elements) {
-        element.paragraph.elements.forEach(el => {
-          if (el.textRun && el.textRun.content) {
-            contentParts.push(el.textRun.content);
-          }
-        });
-      } else if (element.table) {
-        element.table.tableRows.forEach(row => {
-          row.tableCells.forEach(cell => {
-            if (cell.content) {
-              cell.content.forEach(cellElement => {
-                processElement(cellElement);
-              });
-            }
-          });
-        });
-      } else if (element.tableOfContents) {
-        // Skip TOC elements
-      } else {
-        console.log('Unknown element type:', Object.keys(element));
-      }
-    };
-
-    docContent.body.content.forEach(processElement);
-
-    const fullContent = contentParts.join('\n');
-    console.log('Extracted content length:', fullContent.length);
-    return fullContent;
-  } catch (error) {
-    console.error('Content extraction error:', error);
-    return '';
-  }
-}
-
-function htmlToGoogleDocsStructure(htmlContent) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(htmlContent, 'text/html');
-
-  const requests = [];
-  let currentIndex = 1;
-
-  // Process text with optional text and paragraph formatting
-  function addFormattedText(text, textStyle = {}, paragraphStyle = {}) {
-    if (!text || !text.trim()) return;
-
-    // Add the text
-    requests.push({
-      insertText: {
-        location: { index: currentIndex },
-        text: text + '\n'
-      }
-    });
-
-    // Apply text formatting if specified
-    if (Object.keys(textStyle).length > 0) {
-      requests.push({
-        updateTextStyle: {
-          range: {
-            startIndex: currentIndex,
-            endIndex: currentIndex + text.length
-          },
-          textStyle: textStyle,
-          fields: '*'
-        }
-      });
-    }
-
-    // Apply paragraph formatting if specified
-    if (Object.keys(paragraphStyle).length > 0) {
-      requests.push({
-        updateParagraphStyle: {
-          range: {
-            startIndex: currentIndex,
-            endIndex: currentIndex + text.length
-          },
-          paragraphStyle: paragraphStyle,
-          fields: '*'
-        }
-      });
-    }
-
-    currentIndex += text.length + 1;
-  }
-
-  // Process headings
-  const headings = doc.getElementsByTagName('h1');
-  Array.from(headings).forEach(heading => {
-    addFormattedText(
-        heading.textContent,
-        { bold: true, fontSize: { magnitude: 16, unit: 'PT' } },
-        { namedStyleType: 'HEADING_1' }
-    );
-  });
-
-  // Process subheadings
-  const subHeadings = doc.getElementsByTagName('h2');
-  Array.from(subHeadings).forEach(heading => {
-    addFormattedText(
-        heading.textContent,
-        { bold: true, fontSize: { magnitude: 14, unit: 'PT' } },
-        { namedStyleType: 'HEADING_2' }
-    );
-  });
-
-  // Process paragraphs
-  const paragraphs = doc.getElementsByTagName('p');
-  Array.from(paragraphs).forEach(para => {
-    addFormattedText(
-        para.textContent,
-        {},
-        { namedStyleType: 'NORMAL_TEXT' }
-    );
-  });
-
-  // Process lists
-  const lists = doc.getElementsByTagName('ul');
-  Array.from(lists).forEach(list => {
-    const items = list.getElementsByTagName('li');
-    Array.from(items).forEach(item => {
-      addFormattedText(
-          '• ' + item.textContent,
-          {},
-          {
-            namedStyleType: 'NORMAL_TEXT',
-            indentStart: { magnitude: 36, unit: 'PT' },
-            indentFirstLine: { magnitude: 18, unit: 'PT' }
-          }
-      );
-    });
-  });
-
-  // Process code blocks
-  const preBlocks = doc.getElementsByTagName('pre');
-  Array.from(preBlocks).forEach(pre => {
-    addFormattedText(
-        pre.textContent,
-        {
-          fontFamily: 'Courier New',
-          backgroundColor: { color: { rgbColor: { red: 0.95, green: 0.95, blue: 0.95 } } }
-        },
-        {
-          namedStyleType: 'NORMAL_TEXT',
-          spaceAbove: { magnitude: 10, unit: 'PT' },
-          spaceBelow: { magnitude: 10, unit: 'PT' }
-        }
-    );
-  });
-
-  return requests;
-}
-
-
 // Authentication Middleware
 const authenticateGoogle = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -332,13 +135,36 @@ async function createConvertedFolder(drive) {
   }
 }
 
+// Extract Document Content Safely
+function extractDocumentContent(docContent) {
+  try {
+    // Flatten content extraction with more robust handling
+    const contentParts = [];
+
+    docContent.body.content.forEach(section => {
+      if (section.paragraph && section.paragraph.elements) {
+        section.paragraph.elements.forEach(element => {
+          if (element.textRun && element.textRun.content) {
+            contentParts.push(element.textRun.content);
+          }
+        });
+      }
+    });
+
+    return contentParts.join('\n');
+  } catch (error) {
+    console.error('Content extraction error:', error);
+    return '';
+  }
+}
+
 // Docs Route - Find Markdown-like Documents
 app.get('/api/docs', authenticateGoogle, async (req, res) => {
   try {
-    console.log('Starting /api/docs endpoint');
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     const docs = google.docs({ version: 'v1', auth: oauth2Client });
 
+    // Search for Google Docs files with broader permissions
     const response = await drive.files.list({
       q: "mimeType='application/vnd.google-apps.document'",
       fields: 'files(id, name, permissions)',
@@ -346,178 +172,105 @@ app.get('/api/docs', authenticateGoogle, async (req, res) => {
       includeItemsFromAllDrives: true
     });
 
-    console.log(`Found ${response.data.files.length} total documents`);
+    // Filter and verify docs with markdown-like content
     const markdownDocs = [];
 
     for (const file of response.data.files) {
       try {
-        // Skip files that have "Converted" in their name
-        if (file.name.toLowerCase().includes('converted')) {
-          console.log(`Skipping already converted file: ${file.name}`);
-          continue;
-        }
-        console.log(`Processing file: ${file.name} (${file.id})`);
+        // Get the document content
         const docContent = await docs.documents.get({
           documentId: file.id
         });
 
+        // Extract content
         const content = extractDocumentContent(docContent.data);
-        console.log(`Extracted content length for ${file.name}: ${content.length}`);
 
-        if (isMarkdownContent(content)) {
-          console.log(`${file.name} identified as markdown`);
-          markdownDocs.push({
-            ...file,
-            previewContent: content.substring(0, 200) // Add preview content for verification
-          });
-        } else {
-          console.log(`${file.name} is not markdown`);
+        // Basic markdown detection (you can refine this logic)
+        if (
+            content.includes('# ') || // Headers
+            content.includes('## ') ||
+            content.includes('**') || // Bold
+            content.includes('*') ||   // Italic
+            content.includes('- ') ||  // Lists
+            content.includes('```')    // Code blocks
+        ) {
+          markdownDocs.push(file);
         }
       } catch (error) {
         console.error(`Error processing doc ${file.id}:`, error);
       }
     }
 
-    console.log(`Found ${markdownDocs.length} markdown documents`);
     res.json(markdownDocs);
   } catch (error) {
     console.error('Full error details:', error);
     res.status(500).json({
-      error: 'Error processing documents',
+      error: 'Insufficient Permission',
       details: error.message
     });
   }
 });
+
 // Conversion Utilities
+function htmlToGoogleDocsStructure(htmlContent) {
+  // Parse HTML to extract text and structure
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlContent, 'text/html');
 
-// Update your conversion endpoint to use the new functions
-app.post('/api/convert', authenticateGoogle, async (req, res) => {
-  try {
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
-    const docs = google.docs({ version: 'v1', auth: oauth2Client });
+  const requests = [];
+  let currentIndex = 1;
 
-    // Create a converted folder
-    const folderMetadata = {
-      name: 'Converted Markdown Files',
-      mimeType: 'application/vnd.google-apps.folder'
-    };
-    const folder = await drive.files.create({
-      resource: folderMetadata,
-      fields: 'id'
-    });
-    const convertedFolderId = folder.data.id;
-
-    // Search for Google Docs files
-    const fileListResponse = await drive.files.list({
-      q: "mimeType='application/vnd.google-apps.document'",
-      pageSize: 100,
-      fields: 'files(id, name)',
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true
-    });
-
-    const markdownFiles = [];
-    const convertedFiles = [];
-    const zip = new AdmZip();
-
-    for (const file of fileListResponse.data.files) {
-      try {
-        // Skip files that have "Converted" in their name
-        if (file.name.toLowerCase().includes('converted')) {
-          console.log(`Skipping already converted file: ${file.name}`);
-          continue;
-        }
-        // Get the document content
-        const docContent = await docs.documents.get({
-          documentId: file.id
-        });
-
-        // Extract content using the original method
-        const rawContent = docContent.data.body.content
-            .filter(section => section.paragraph && section.paragraph.elements)
-            .map(section =>
-                section.paragraph.elements
-                    .filter(element => element.textRun && element.textRun.content)
-                    .map(element => element.textRun.content)
-                    .join('')
-            )
-            .join('\n');
-
-        // Convert markdown to HTML
-        const htmlContent = marked.parse(rawContent);
-
-        // Convert HTML to Google Docs structure with improved formatting
-        const requests = htmlToGoogleDocsStructure(htmlContent);
-
-        // Create a new Google Docs file
-        const docsFile = await docs.documents.create({
-          resource: {
-            title: `Converted-${file.name}`
-          }
-        });
-
-        // Batch update the document with formatted content
-        await docs.documents.batchUpdate({
-          documentId: docsFile.data.documentId,
-          resource: { requests }
-        });
-
-        // Move the file to converted folder
-        await drive.files.update({
-          fileId: docsFile.data.documentId,
-          addParents: convertedFolderId,
-          fields: 'id, parents',
-          supportsAllDrives: true
-        });
-
-        // Export as PDF
-        const pdfResponse = await drive.files.export(
-            {
-              fileId: docsFile.data.documentId,
-              mimeType: 'application/pdf'
-            },
-            { responseType: 'arraybuffer' }
-        );
-
-        const pdfBuffer = Buffer.from(pdfResponse.data);
-        zip.addFile(`${file.name}.pdf`, pdfBuffer);
-
-        convertedFiles.push({
-          originalFileName: file.name,
-          convertedFileName: `${file.name}.pdf`,
-          status: 'converted'
-        });
-      } catch (fileError) {
-        console.error(`Error processing file ${file.id}:`, fileError);
-        convertedFiles.push({
-          originalFileName: file.name,
-          status: 'failed',
-          error: fileError.message
-        });
+  // Helper function to add text with formatting
+  const addFormattedText = (text, formatting = {}) => {
+    requests.push({
+      insertText: {
+        location: { index: currentIndex },
+        text: text
       }
+    });
+
+    if (Object.keys(formatting).length > 0) {
+      requests.push({
+        updateTextStyle: {
+          range: {
+            startIndex: currentIndex,
+            endIndex: currentIndex + text.length
+          },
+          textStyle: formatting,
+          fields: 'bold,italic,underline'
+        }
+      });
     }
 
-    // Generate zip file
-    const zipBuffer = zip.toBuffer();
+    currentIndex += text.length;
+  };
 
-    res.json({
-      totalFiles: convertedFiles.length,
-      convertedFiles,
-      zipDownloadLink: `/api/download-zip?token=${req.headers.authorization.split(' ')[1]}`
-    });
+  // Process headings
+  const headings = doc.getElementsByTagName('h1');
+  Array.from(headings).forEach(heading => {
+    addFormattedText(heading.textContent + '\n', { bold: true });
+  });
 
-    // Store zip temporarily
-    global.convertedZip = zipBuffer;
-  } catch (error) {
-    console.error('Conversion error:', error);
-    res.status(500).json({
-      error: 'Conversion Failed',
-      details: error.message
+  // Process paragraphs
+  const paragraphs = doc.getElementsByTagName('p');
+  Array.from(paragraphs).forEach(para => {
+    addFormattedText(para.textContent + '\n');
+  });
+
+  // Process lists
+  const lists = doc.getElementsByTagName('ul');
+  Array.from(lists).forEach(list => {
+    const listItems = list.getElementsByTagName('li');
+    Array.from(listItems).forEach(item => {
+      addFormattedText('• ' + item.textContent + '\n');
     });
-  }
-});
+  });
+
+  return requests;
+}
+
 // Conversion Route
-app.post('/api/convert-3', authenticateGoogle, async (req, res) => {
+app.post('/api/convert', authenticateGoogle, async (req, res) => {
   try {
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     const docs = google.docs({ version: 'v1', auth: oauth2Client });
