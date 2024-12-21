@@ -351,6 +351,11 @@ app.get('/api/docs', authenticateGoogle, async (req, res) => {
 
     for (const file of response.data.files) {
       try {
+        // Skip files that have "Converted" in their name
+        if (file.name.toLowerCase().includes('converted')) {
+          console.log(`Skipping already converted file: ${file.name}`);
+          continue;
+        }
         console.log(`Processing file: ${file.name} (${file.id})`);
         const docContent = await docs.documents.get({
           documentId: file.id
@@ -417,6 +422,11 @@ app.post('/api/convert', authenticateGoogle, async (req, res) => {
 
     for (const file of fileListResponse.data.files) {
       try {
+        // Skip files that have "Converted" in their name
+        if (file.name.toLowerCase().includes('converted')) {
+          console.log(`Skipping already converted file: ${file.name}`);
+          continue;
+        }
         // Get the document content
         const docContent = await docs.documents.get({
           documentId: file.id
