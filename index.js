@@ -100,6 +100,7 @@ function extractDocumentContent(docContent) {
     return '';
   }
 }
+
 function htmlToGoogleDocsStructure(htmlContent) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlContent, 'text/html');
@@ -107,8 +108,8 @@ function htmlToGoogleDocsStructure(htmlContent) {
   const requests = [];
   let currentIndex = 1;
 
-  // Process text with optional formatting
-  function addFormattedText(text, format = {}) {
+  // Process text with optional text and paragraph formatting
+  function addFormattedText(text, textStyle = {}, paragraphStyle = {}) {
     if (!text || !text.trim()) return;
 
     // Add the text
@@ -119,15 +120,29 @@ function htmlToGoogleDocsStructure(htmlContent) {
       }
     });
 
-    // Apply formatting if specified
-    if (Object.keys(format).length > 0) {
+    // Apply text formatting if specified
+    if (Object.keys(textStyle).length > 0) {
       requests.push({
         updateTextStyle: {
           range: {
             startIndex: currentIndex,
             endIndex: currentIndex + text.length
           },
-          textStyle: format,
+          textStyle: textStyle,
+          fields: '*'
+        }
+      });
+    }
+
+    // Apply paragraph formatting if specified
+    if (Object.keys(paragraphStyle).length > 0) {
+      requests.push({
+        updateParagraphStyle: {
+          range: {
+            startIndex: currentIndex,
+            endIndex: currentIndex + text.length
+          },
+          paragraphStyle: paragraphStyle,
           fields: '*'
         }
       });
@@ -139,19 +154,31 @@ function htmlToGoogleDocsStructure(htmlContent) {
   // Process headings
   const headings = doc.getElementsByTagName('h1');
   Array.from(headings).forEach(heading => {
-    addFormattedText(heading.textContent, { bold: true, fontSize: { magnitude: 16, unit: 'PT' } });
+    addFormattedText(
+        heading.textContent,
+        { bold: true, fontSize: { magnitude: 16, unit: 'PT' } },
+        { namedStyleType: 'HEADING_1' }
+    );
   });
 
   // Process subheadings
   const subHeadings = doc.getElementsByTagName('h2');
   Array.from(subHeadings).forEach(heading => {
-    addFormattedText(heading.textContent, { bold: true, fontSize: { magnitude: 14, unit: 'PT' } });
+    addFormattedText(
+        heading.textContent,
+        { bold: true, fontSize: { magnitude: 14, unit: 'PT' } },
+        { namedStyleType: 'HEADING_2' }
+    );
   });
 
   // Process paragraphs
   const paragraphs = doc.getElementsByTagName('p');
   Array.from(paragraphs).forEach(para => {
-    addFormattedText(para.textContent);
+    addFormattedText(
+        para.textContent,
+        {},
+        { namedStyleType: 'NORMAL_TEXT' }
+    );
   });
 
   // Process lists
@@ -159,24 +186,38 @@ function htmlToGoogleDocsStructure(htmlContent) {
   Array.from(lists).forEach(list => {
     const items = list.getElementsByTagName('li');
     Array.from(items).forEach(item => {
-      addFormattedText('• ' + item.textContent, {
-        indentFirstLine: { magnitude: 18, unit: 'PT' },
-        indentStart: { magnitude: 36, unit: 'PT' }
-      });
+      addFormattedText(
+          '• ' + item.textContent,
+          {},
+          {
+            namedStyleType: 'NORMAL_TEXT',
+            indentStart: { magnitude: 36, unit: 'PT' },
+            indentFirstLine: { magnitude: 18, unit: 'PT' }
+          }
+      );
     });
   });
 
   // Process code blocks
   const preBlocks = doc.getElementsByTagName('pre');
   Array.from(preBlocks).forEach(pre => {
-    addFormattedText(pre.textContent, {
-      fontFamily: 'Courier New',
-      backgroundColor: { color: { rgbColor: { red: 0.95, green: 0.95, blue: 0.95 } } }
-    });
+    addFormattedText(
+        pre.textContent,
+        {
+          fontFamily: 'Courier New',
+          backgroundColor: { color: { rgbColor: { red: 0.95, green: 0.95, blue: 0.95 } } }
+        },
+        {
+          namedStyleType: 'NORMAL_TEXT',
+          spaceAbove: { magnitude: 10, unit: 'PT' },
+          spaceBelow: { magnitude: 10, unit: 'PT' }
+        }
+    );
   });
 
   return requests;
 }
+
 
 // Authentication Middleware
 const authenticateGoogle = async (req, res, next) => {
